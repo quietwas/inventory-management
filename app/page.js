@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { Box, Stack, Typography, Button, Modal, TextField } from '@mui/material'
-import { firestore } from '@/firebase'
+import { signInWithPopup, onAuthStateChanged, signOut } from "firebase/auth";
+import { firestore, auth, provider } from '@/firebase'
 import {
   collection,
   doc,
@@ -30,14 +31,15 @@ const style = {
 
 export default function Home() {
   const [inventory, setInventory] = useState([])
-  const[open, setOpen] = useState(false)
-  const[itemName, setItemName] = useState('')
+  const [open, setOpen] = useState(false)
+  const [itemName, setItemName] = useState('')
+  const [user, setUser] = useState(null)
 
-  const updateInventory = async() => {
-    const snapshot = query(collection(firestore, 'inventory'))
+  const updateInventory = async (uid) => {
+    const snapshot = query(collection(firestore, `users/${uid}/inventory`))
     const docs = await getDocs(snapshot)
     const inventoryList = []
-    docs.forEach((doc) =>{
+    docs.forEach((doc) => {
       inventoryList.push({
         name: doc.id,
         ...doc.data(),
@@ -46,8 +48,8 @@ export default function Home() {
     setInventory(inventoryList)
   }
 
-  const addItem = async (item) => {
-    const docRef = doc(collection(firestore, 'inventory'), item)
+  const addItem = async (item, uid) => {
+    const docRef = doc(collection(firestore, `users/${uid}/inventory`), item)
     const docSnap = await getDoc(docRef)
     if (docSnap.exists()) {
       const { quantity } = docSnap.data()
@@ -55,11 +57,11 @@ export default function Home() {
     } else {
       await setDoc(docRef, { quantity: 1 })
     }
-    await updateInventory()
+    await updateInventory(uid)
   }
-  
-  const removeItem = async (item) => {
-    const docRef = doc(collection(firestore, 'inventory'), item)
+
+  const removeItem = async (item, uid) => {
+    const docRef = doc(collection(firestore, `users/${uid}/inventory`), item)
     const docSnap = await getDoc(docRef)
     if (docSnap.exists()) {
       const { quantity } = docSnap.data()
@@ -69,15 +71,58 @@ export default function Home() {
         await setDoc(docRef, { quantity: quantity - 1 })
       }
     }
-    await updateInventory()
+    await updateInventory(uid)
   }
 
   const handleOpen = () => setOpen(true)
   const handleClose = () => setOpen(false)
 
+  const handleSignIn = async () => {
+    try {
+      await signInWithPopup(auth, provider);
+      alert("Signed in successfully!");
+    } catch (error) {
+      console.error("Error signing in:", error);
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+      alert("Signed out successfully!");
+    } catch (error) {
+      console.error("Error signing out:", error);
+    }
+  };
+
   useEffect(() => {
-    updateInventory()
-  }, [])
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setUser(user);
+        updateInventory(user.uid);
+      } else {
+        setUser(null);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  if (!user) {
+    return (
+      <Box
+        width="100vw"
+        height="100vh"
+        display={'flex'}
+        justifyContent={'center'}
+        alignItems={'center'}
+      >
+        <Button variant="contained" onClick={handleSignIn}>
+          Sign in with Google
+        </Button>
+      </Box>
+    );
+  }
 
   return (
     <Box
@@ -89,6 +134,15 @@ export default function Home() {
       alignItems={'center'}
       gap={2}
     >
+      <Box
+        position="absolute"
+        top={16}
+        right={16}
+      >
+        <Button variant="contained" onClick={handleSignOut}>
+          Sign Out
+        </Button>
+      </Box>
       <Modal
         open={open}
         onClose={handleClose}
@@ -111,7 +165,7 @@ export default function Home() {
             <Button
               variant="outlined"
               onClick={() => {
-                addItem(itemName)
+                addItem(itemName, user.uid)
                 setItemName('')
                 handleClose()
               }}
@@ -138,7 +192,7 @@ export default function Home() {
           </Typography>
         </Box>
         <Stack width="800px" height="300px" spacing={2} overflow={'auto'}>
-          {inventory.map(({name, quantity}) => (
+          {inventory.map(({ name, quantity }) => (
             <Box
               key={name}
               width="100%"
@@ -155,7 +209,7 @@ export default function Home() {
               <Typography variant={'h3'} color={'#333'} textAlign={'center'}>
                 Quantity: {quantity}
               </Typography>
-              <Button variant="contained" onClick={() => removeItem(name)}>
+              <Button variant="contained" onClick={() => removeItem(name, user.uid)}>
                 Remove
               </Button>
             </Box>
